@@ -9,3 +9,4 @@ Downloaded from public `erikhinla/flow-as` (no clone). Served by the social engi
 Local patches:
 - `index.html` loads Tailwind Play CDN because the dist CSS is uncompiled `@tailwind` directives.
 - JS approve panel also shows when `status === "review_required"` so alpha social creative review can be approved (upstream UI gated on `owner_role === "gamma"`).
+- Dashboard fetch is same-origin `/api/flow` (nginx used to rewrite `/api` → bizbrain `/v1`).
