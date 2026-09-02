@@ -1,4 +1,4 @@
-"""FastAPI entry: briefs, drafts, Telegram webhook, health, resume."""
+"""FastAPI entry: briefs, drafts, Telegram webhook, FLOW dashboard, health, resume."""
 
 from __future__ import annotations
 
@@ -9,8 +9,14 @@ import re
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
+from pathlib import Path
+
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.flow import bizbrain_stub_payloads, build_flow_router, serialize_task, utc_now
 
 from app.clients import (
     FakeGrokClient,
@@ -151,6 +157,16 @@ def create_app(
         database.get_draft("__missing__")
         return HealthOut(status="ok", fake=settings.use_fake_clients(), db="ok")
 
+    @app.get("/v1/health")
+    async def v1_health() -> dict:
+        database.get_draft("__missing__")
+        return {
+            "status": "ok",
+            "fake": settings.use_fake_clients(),
+            "db": "ok",
+            "timestamp": utc_now(),
+        }
+
     @app.post("/briefs", response_model=BriefOut)
     async def create_brief(body: BriefIn, pipe: Pipeline = Depends(get_pipeline)) -> BriefOut:
         row = await pipe.create_from_brief(body.brief, body.telegram_chat_id)
@@ -224,6 +240,75 @@ def create_app(
         if not path.exists() or not path.is_file():
             raise HTTPException(404, "media not found")
         return FileResponse(path)
+
+    cors_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8088",
+        "http://127.0.0.1:8088",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    flow_router = build_flow_router()
+    app.include_router(flow_router, prefix="/v1/flow")
+    app.include_router(flow_router, prefix="/api/flow")
+
+    stubs = bizbrain_stub_payloads()
+
+    @app.get("/api/health")
+    async def api_health() -> dict:
+        return {"status": "healthy", "timestamp": utc_now(), "version": "social-engine"}
+
+    @app.get("/api/intake/queues/status")
+    async def api_queue_status() -> dict:
+        payload = dict(stubs["queues"])
+        payload["timestamp"] = utc_now()
+        return payload
+
+    @app.get("/api/performance/analysis")
+    async def api_performance(hours: int = 24) -> dict:
+        body = dict(stubs["performance"])
+        body["hours"] = hours
+        return body
+
+    @app.get("/api/performance/skills/effectiveness")
+    async def api_skills() -> dict:
+        return stubs["skills"]
+
+    @app.get("/api/tasks")
+    async def api_jobs(limit: int = 50) -> dict:
+        tasks = []
+        for task, draft in database.list_flow_task_rows()[:limit]:
+            media = database.list_media(task["draft_id"])
+            tasks.append(serialize_task(task, draft, media, audit=task.get("audit") or []))
+        return {"tasks": tasks}
+
+    dashboard_dir = Path(__file__).resolve().parent.parent / "dashboard"
+    assets_dir = dashboard_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="dashboard-assets")
+
+    def _dashboard_index() -> FileResponse:
+        index = dashboard_dir / "index.html"
+        if not index.is_file():
+            raise HTTPException(404, "dashboard not packaged")
+        return FileResponse(index, media_type="text/html")
+
+    @app.get("/", include_in_schema=False)
+    async def dashboard_root():
+        return _dashboard_index()
+
+    @app.get("/flow-control", include_in_schema=False)
+    async def dashboard_flow_control():
+        return _dashboard_index()
 
     return app
 

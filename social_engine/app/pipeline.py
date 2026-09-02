@@ -105,8 +105,13 @@ class Pipeline:
         self.telegram = telegram
         self.fetch_image = fetch_image or http_fetch_image
 
-    async def create_from_brief(self, brief: str, telegram_chat_id: Optional[str] = None) -> dict[str, Any]:
-        draft_id = uuid4().hex
+    async def create_from_brief(
+        self,
+        brief: str,
+        telegram_chat_id: Optional[str] = None,
+        draft_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        draft_id = draft_id or uuid4().hex
         self.db.create_draft(draft_id, brief, telegram_chat_id=telegram_chat_id, video_first=1)
         copy = await self.grok.generate_copy(GrokCopyRequest(brief=brief, mode="generate"))
         row = self.db.save_copy(draft_id, copy, status="awaiting_approval")
